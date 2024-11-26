@@ -1,0 +1,60 @@
+name: 'Multi-Repository Dependencies Action'
+description: 'Create dependencies.yaml to match base or head branch.'
+author: 'Luis Camero'
+inputs:
+  branch:
+    description: 'Branch to update dependencies.yaml with, choose either: "base" or "head".'
+    reqruied: false
+    default: "head"
+runs:
+  using: 'composite'
+  steps:
+    - name: Create multi_repo_dependencies.repos
+      id: create-repos
+      shell: bash
+      env:
+        NUMBER: ${{ github.event.pull_request.number }}
+        GH_REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        pip install yq
+        sudo apt-get install jq
+
+        echo "Get labels, head branch, and base branch"
+        labels=$(gh pr view "$NUMBER" --json labels -q '.labels|map(.name)')
+        head_branch=$(gh pr view "$NUMBER" --json headRefName -q '.headRefName')
+        base_branch=$(gh pr view "$NUMBER" --json baseRefName -q '.baseRefName')
+
+        echo "Repository: $GH_REPO"
+        echo "  labels: $labels"
+        echo "  head branch: $head_branch"
+        echo "  base_branch: $base_branch"
+
+        if [[ ${{ inputs.branch }} == *"head"* ]]; then
+          branch="$head_branch"
+        elif [[ ${{ inputs.branch }} == *"base"* ]]; then
+          branch="$base_branch"
+        else
+          branch="None"
+        fi
+        echo "Using branch: $branch for source build."
+
+        echo -e "repositories:" >> tmp_dependencies.repos
+        for repo in $(yq -r '.repositories | to_entries[] | .key' dependencies.repos); do
+          type=$(yq -r .repositories.$repo.type dependencies.repos)
+          url=$(yq -r .repositories.$repo.url dependencies.repos)
+          version=$(yq -r .repositories.$repo.version dependencies.repos)
+          info=$(git ls-remote $url)
+          if [[ $branch == "None" ]]; then
+            version=$version
+          elif [[ $info == *"$branch"* ]]; then
+            version=$branch
+          else
+            version=$version
+          fi
+          echo -e "  $repo:" >> tmp_dependencies.repos
+          echo -e "    type: $type" >> tmp_dependencies.repos
+          echo -e "    url: $url" >> tmp_dependencies.repos
+          echo -e "    version: $version" >> tmp_dependencies.repos
+        done
+        cat tmp_dependencies.repos
